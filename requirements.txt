@@ -1,0 +1,8 @@
+pandas
+numpy
+faker
+psycopg2-binary
+scikit-learn
+matplotlib
+seaborn
+xgboost
