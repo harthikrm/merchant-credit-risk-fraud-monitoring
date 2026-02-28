@@ -1,58 +1,165 @@
-# Merchant Credit Risk + Fraud Monitoring (Fiserv-aligned)
-An end-to-end synthetic data pipeline and ML modeling project demonstrating risk scoring and portfolio monitoring for payment processing.
+# Merchant Credit Risk & Fraud Monitoring System
+**SQL · PostgreSQL · Python · XGBoost · Power BI**
 
-## Project Outcome
-*   **Data Generation Plan:** Python script to synthesize event-log data for 1200 merchants, 400K transactions, and 40K SLA events. Showcases complex behavior patterns like fraud rate changes, industry seasonality, and causal links between chargebacks/SLA breaches and merchant default risk.
-*   **SQL Feature Pipeline:** Built an analytics engineering pipeline implementing feature engineering at the merchant-month grain. Extracts past-window features (30-day volume, risk metrics, trends) and applies strict target leakage checks (no future knowledge in features). Shows rigorous data tests covering orphan records and anomalies.
-*   **Machine Learning (Champion vs. Challenger):** Trained a Logistic Regression (Champion) and an XGBoost (Challenger) model. Optimized on PR-AUC. Implemented custom cost thresholds matching a realistic business environment scenarios (evaluating the cost of missing a true default against investigating a false positive).
-*   **Rules Engine Framework:** Integrated ML predictive scores with hard-coded risk rules targeting sudden spikes in volume, sustained high chargebacks, and repeated SLA delays, ranking a hybrid "top priority investigations" queue.
+An end-to-end merchant risk scoring system built on synthetic payment transaction data. Models fraud and credit risk at the merchant-month grain using a full analytics engineering pipeline, champion-challenger ML framework, cost-sensitive thresholding, and a hybrid rules + model scoring engine — aligned to real-world payment processor risk operations.
 
-## Folder Structure
+---
+
+## Business Problem
+Payment processors like Fiserv need to identify high-risk merchants before they default — but fraud signals are rare, imbalanced, and buried in noisy transaction streams. This system engineers behavioral features from raw event logs, builds leakage-free predictive models, and produces a ranked investigation queue for risk analysts to act on.
+
+---
+
+## Architecture & Data Flow
+
+```mermaid
+graph LR
+    Gen[generate_data.py] -->|Synthetic CSVs| Raw[Raw Tables]
+    Raw -->|03_feature_views.sql| Feat[v_merchant_month_features]
+    Feat -->|04_labels.sql| Label[default_next_60d]
+    Feat & Label -->|06_model_dataset.sql| Dataset[v_model_dataset]
+    Dataset -->|train.py| Models[Champion / Challenger]
+    Models -->|score.py| Queue[Risk Investigation Queue]
+    Queue -->|07_marts.sql| PBI[Power BI Dashboard]
 ```
-credit-risk-monitoring/
-├── README.md                           # Documentation
-├── data/                               
-│   ├── raw/                            # Synthesized CVS
-│   └── processed/                      # Model outputs
+
+1. **Data Generation** — Python synthesizes 1,200 merchants, 400K transactions, and 40K SLA events with realistic fraud behavior, industry seasonality, and progressive bad-actor patterns
+2. **Feature Engineering** — SQL views compute 30/60/90-day behavioral features at the merchant-month grain with strict leakage guards
+3. **Labeling** — 60-day forward default label driven by chargeback rate, fraud rate, decline rate, and SLA breach combinations
+4. **Modeling** — Champion (Logistic Regression) vs Challenger (XGBoost) evaluated on PR-AUC and Precision@K
+5. **Scoring** — Hybrid model + rules engine produces ranked risk queue with cost-optimized thresholds
+6. **Reporting** — Portfolio monitoring marts feed Power BI dashboard
+
+---
+
+## Dataset
+
+| File | Rows | Description |
+|---|---|---|
+| merchants.csv | 1,200 | One row per merchant with industry, state, risk tier |
+| transactions.csv | ~400,000 | Payment event log (CARD/ACH, fraud/chargeback flags) |
+| sla_events.csv | 39,955 | SLA compliance events (disputes, settlement delays) |
+| scored_test_set.csv | 3,600 | Model predictions on holdout set |
+| final_scored_portfolio.csv | 3,600 | Final hybrid risk scores + investigation queue |
+
+**Note:** `transactions.csv` is not committed due to file size. Run `src/generate_data.py` to regenerate all raw data.
+
+---
+
+## Project Structure
+```
+merchant-credit-risk-fraud-monitoring/
+├── data/
+│   ├── raw/                              # Synthetic CSVs (regenerate via generate_data.py)
+│   └── processed/                        # Model outputs and scored portfolio
 ├── sql/
-│   ├── 01_schema.sql                   # DDL
-│   ├── 02_load.sql                     # Staging
-│   ├── 03_feature_views.sql            # Feature layer
-│   ├── 04_data_tests.sql               # Anomaly checks
-│   ├── 05_model_dataset.sql            # Core dataset
-│   └── 06_marts.sql                    # Reporting aggregations
+│   ├── 01_schema.sql                     # PostgreSQL schema with PK/FK/indexes
+│   ├── 02_load.sql                       # Bulk data loading
+│   ├── 03_feature_views.sql              # 30/60/90-day feature engineering views
+│   ├── 04_labels.sql                     # Leakage-free 60-day forward default label
+│   ├── 05_data_tests.sql                 # Data quality + leakage guard suite
+│   ├── 06_model_dataset.sql              # Final feature + label join
+│   └── 07_marts.sql                      # Portfolio overview + risk queue marts
 ├── src/
-│   ├── generate_data.py                # Synthetic generation script
-│   ├── train.py                        # Model trainer
-│   └── score.py                        # Rule engine processor
-├── notebooks/                          
-│   ├── 01_eda.py                       
+│   ├── generate_data.py                  # Synthetic data generator
+│   ├── train.py                          # Champion vs Challenger model training
+│   ├── score.py                          # Rules engine + hybrid scoring
+│   └── tune_thresholds.py               # Label threshold calibration
+├── notebooks/
+│   ├── 01_eda.py                         # Exploratory data analysis
 │   ├── 02_modeling_champion_vs_challenger.py
 │   └── 03_thresholding_cost_tradeoff.py
-└── powerbi/
-    └── risk_portfolio.pbix             # Dashboard placeholder
+├── requirements.txt
+└── README.md
 ```
 
-## Schema & Design
-### Tables
-1.  **`merchants`**: Hidden driver `risk_tier_true` used for generative logic, simulating behavior.
-2.  **`transactions` (Event Log)**: Simulates the core of payments operations (amount, channel, status, chargeback flags).
-3.  **`sla_events` (Event Log)**: Captures secondary operations delays corresponding to non-payment risk behavior.
-4.  **`outcomes_monthly` (Labels)**: The ML objective table calculating whether a merchant defaults in the upcoming 60-day window (`default_next_60d`).
+---
 
-## How To Run Locally
-1. Activate a Python `venv` and install the requirements file.
-2. Run `src/generate_data.py` to synthesize the `data/raw/` CSV records.
-3. Apply the SQL scripts inside the `sql/` directory to build the analytics structures in Postgres.
-4. Run `src/train.py` (which mirrors the SQL logics in Pandas for ML execution) to generate model predictors, evaluate on PR-AUC, and write to `scored_test_set.csv`.
-5. Run `src/score.py` to calculate thresholding profits and generate a high-priority risk investigation queue.
+## Key Technical Components
 
-## Highlighted KPIs / Capabilities Focus
--   **Evaluation Strategy**: Precision@K (evaluating the top N-percent of the portfolio).
--   **Class Imbalance**: Enforced heavily imbalanced real-world distributions (fraud roughly 0.5-2%, overall default ~1-5%).
--   **Data Validation suite**: Ensures metric integrity.
+### 1. Feature Engineering (`03_feature_views.sql`)
+18+ behavioral and acceleration features engineered at the merchant-month grain:
+- **30-day window** — GMV, fraud rate, chargeback rate, decline rate, ACH share, amount volatility
+- **60-day window** — SLA breach rate, sustained fraud/chargeback trends
+- **90-day window** — Cumulative fraud, rolling volatility, max daily decline spike
+- **MoM trends** — Fraud acceleration, chargeback acceleration, GMV change
+- **Advanced** — Z-score fraud (vs historical baseline), risk interaction terms (fraud × chargeback)
 
-## Key Resume Achievements
-*   "Built merchant risk scoring system using SQL feature engineering + Python modeling; evaluated champion/challenger models and optimized thresholds for imbalanced fraud outcomes."
-*   "Designed event-log portfolio monitoring framework (transactions + SLA events) with data validation suite to ensure metric integrity and leakage-free modeling."
-*   "Delivered Power BI portfolio dashboard and investigation queue for high-risk merchants using risk scores + rule-based alerts."
+### 2. Leakage-Free Labeling (`04_labels.sql`)
+60-day forward default label with strict temporal separation — no future data leaks into features:
+- Chargeback rate ≥ 6% in next 60 days
+- Fraud rate ≥ 6% in next 60 days
+- Decline rate ≥ 25% AND fraud count ≥ 10
+- SLA breach rate ≥ 20% AND transaction volume ≥ 200
+
+### 3. Data Quality Suite (`05_data_tests.sql`)
+Automated exception detection:
+- Orphan transactions (missing merchant reference)
+- Negative amounts
+- Future timestamps
+- Duplicate transaction IDs
+- Leakage guard (verifies no future transactions appear in feature windows)
+
+### 4. Champion vs Challenger (`src/train.py`)
+- **Champion** — Logistic Regression with class-weighted balancing and StandardScaler
+- **Challenger** — XGBoost with `scale_pos_weight` for imbalance handling
+- **Evaluation** — PR-AUC, ROC-AUC, Precision@Top 5% (most relevant for risk queues)
+- **Split** — Out-of-time validation (train: months 1-9, test: months 10-12)
+
+| Model | PR-AUC | Precision@5% |
+|---|---|---|
+| Champion (Logistic Regression) | 0.41 | ~38% |
+| Challenger (XGBoost) | 0.44 | ~44% |
+
+### 5. Hybrid Scoring Engine (`src/score.py`)
+Combines model scores with hard-coded risk rules:
+- Rule triggers: high chargeback + volume, sustained SLA breaches, fraud rate spikes
+- Final score: `max(model_score, rule_score)`
+- Cost-optimized threshold: FN cost = 10x FP cost (missing a default is far worse than a false review)
+- Output: ranked investigation queue sorted by final risk score
+
+---
+
+## Key Findings
+
+| Metric | Value |
+|---|---|
+| Total Merchants | 1,200 |
+| Total Transactions | ~400,000 |
+| Portfolio Default Rate | ~2.7% |
+| Challenger PR-AUC | 0.44 |
+| Precision@Top 5% | 44% high-risk merchants correctly flagged |
+| SLA Events | 39,955 |
+
+---
+
+## How to Run
+
+### 1. Generate Data
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python src/generate_data.py
+```
+
+### 2. Load & Build SQL Layer
+```bash
+psql -d risk_db -f sql/01_schema.sql
+psql -d risk_db -f sql/02_load.sql
+psql -d risk_db -f sql/03_feature_views.sql
+psql -d risk_db -f sql/04_labels.sql
+psql -d risk_db -f sql/05_data_tests.sql
+psql -d risk_db -f sql/06_model_dataset.sql
+psql -d risk_db -f sql/07_marts.sql
+```
+
+### 3. Train & Score
+```bash
+python src/train.py      # Trains models, outputs scored_test_set.csv
+python src/score.py      # Runs hybrid scoring, outputs final_scored_portfolio.csv
+```
+
+---
+
+*Built by Harthik Mallichetty · [LinkedIn](https://www.linkedin.com/in/harthikrm/) · [GitHub](https://github.com/harthikrm) · MSBA @ UT Dallas*
