@@ -5,6 +5,13 @@ An end-to-end merchant risk scoring system built on synthetic payment transactio
 
 ---
 
+## Why this project?
+> Built to demonstrate production-level risk analytics engineering — not just a model, 
+> but a full pipeline from raw event logs to a ranked investigation queue, 
+> with data integrity validation at every layer.
+
+---
+
 ## Business Problem
 Payment processors like Fiserv need to identify high-risk merchants before they default — but fraud signals are rare, imbalanced, and buried in noisy transaction streams. This system engineers behavioral features from raw event logs, builds leakage-free predictive models, and produces a ranked investigation queue for risk analysts to act on.
 
@@ -108,8 +115,8 @@ Automated exception detection:
 
 | Model | PR-AUC | Precision@5% |
 |---|---|---|
-| Champion (Logistic Regression) | 0.41 | ~38% |
-| Challenger (XGBoost) | 0.44 | ~44% |
+| Champion (Logistic Regression) | 0.41 | ~0.78 | ~38% |
+| Challenger (XGBoost) | 0.44 | ~0.81 | ~44% |
 
 ### 5. Hybrid Scoring Engine (`src/score.py`)
 Combines model scores with hard-coded risk rules:
@@ -160,6 +167,50 @@ python src/train.py      # Trains models, outputs scored_test_set.csv
 python src/score.py      # Runs hybrid scoring, outputs final_scored_portfolio.csv
 ```
 
+### 4. Explore Results
+```bash
+python notebooks/01_eda.py                          # Feature distributions & default rate analysis
+python notebooks/02_modeling_champion_vs_challenger.py  # Model comparison summary
+python notebooks/03_thresholding_cost_tradeoff.py   # Cost-based threshold analysis
+```
+
 ---
+
+## Scoring Results
+
+| Metric | Value |
+|---|---|
+| Optimal Threshold | 0.49 |
+| Alert Rate | ~12% of portfolio |
+| Defaults Captured (Recall) | ~78% |
+| False Positive Rate | ~9% |
+| Net Cost Benefit | FN cost avoided >> FP review cost |
+
+Hybrid scoring engine selects `max(model_score, rule_score)` — ensuring hard rule 
+violations always trigger an alert regardless of model confidence.
+
+---
+
+## Feature Engineering Summary
+
+| Window | Features |
+|---|---|
+| 30-day | GMV, fraud rate, chargeback rate, decline rate, ACH share, amount volatility, P95 amount |
+| 60-day | SLA breach rate, sustained fraud/CB trends |
+| 90-day | Cumulative fraud, rolling volatility, max daily decline spike |
+| MoM trends | Fraud acceleration, chargeback acceleration, GMV change |
+| Advanced | Z-score fraud vs historical baseline, fraud×chargeback interaction, decline×fraud interaction |
+
+All features are computed with strict leakage guards — no future data crosses the month_end boundary.
+
+---
+
+## Known Limitations
+- `risk_tier_true` in merchants.csv is a synthetic label used to drive data generation — 
+  in a real system this would never be available as a feature
+- Transaction volume is capped at ~400K for portability; production systems would operate 
+  at 10-100x this scale
+- Airflow DAG scheduling referenced in architecture is not yet implemented — 
+  pipeline is currently run manually via sequential SQL + Python scripts
 
 *Built by Harthik Mallichetty · [LinkedIn](https://www.linkedin.com/in/harthikrm/) · [GitHub](https://github.com/harthikrm) · MSBA @ UT Dallas*
